@@ -81,52 +81,7 @@ router.post('/', async (req, res) => {
 // ============================================
 // GET /api/users/:id
 // ============================================
-router.get('/', async (req, res) => {
-  try {
-    const parseJSON = (param) => {
-      if (!param) return null;
-      try {
-        const decoded = decodeURIComponent(param);
-        return JSON.parse(decoded);
-      } catch {
-        return null;
-      }
-    };
 
-    let query = User.find();
-
-    // Only apply filters if provided
-    if (req.query.where) {
-      const whereObj = parseJSON(req.query.where);
-      if (whereObj) query = query.find(whereObj);
-    }
-
-    if (req.query.sort) {
-      const sortObj = parseJSON(req.query.sort);
-      if (sortObj) query = query.sort(sortObj);
-    }
-
-    if (req.query.select) {
-      const selectObj = parseJSON(req.query.select);
-      if (selectObj) query = query.select(selectObj);
-    }
-
-    if (req.query.skip) query = query.skip(Number(req.query.skip));
-    if (req.query.limit) query = query.limit(Number(req.query.limit));
-
-    if (req.query.count === 'true') {
-      const count = await query.countDocuments();
-      return ok(res, count);
-    }
-
-    // Execute query safely
-    const results = await query.exec();
-    return ok(res, results);
-  } catch (err) {
-    console.error('GET /api/users error:', err);
-    return error(res, 500, 'Server error retrieving users');
-  }
-});
 
 
 // ============================================
