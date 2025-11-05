@@ -13,28 +13,30 @@ const isId = (s) => mongoose.Types.ObjectId.isValid(s);
 router.get('/', async (req, res) => {
   try {
     const parseJSON = (param) => {
-      try { return typeof param === 'string' ? JSON.parse(param) : param; }
-      catch { return null; }
+      if (!param) return null;
+      try {
+        const decoded = decodeURIComponent(param);
+        return JSON.parse(decoded);
+      } catch {
+        return null;
+      }
     };
 
     let query = User.find();
 
     if (req.query.where) {
       const whereObj = parseJSON(req.query.where);
-      if (!whereObj) return error(res, 400, 'Invalid query parameters');
-      query = query.find(whereObj);
+      if (whereObj && typeof whereObj === 'object') query = query.find(whereObj);
     }
 
     if (req.query.sort) {
       const sortObj = parseJSON(req.query.sort);
-      if (!sortObj) return error(res, 400, 'Invalid query parameters');
-      query = query.sort(sortObj);
+      if (sortObj && typeof sortObj === 'object') query = query.sort(sortObj);
     }
 
     if (req.query.select) {
       const selectObj = parseJSON(req.query.select);
-      if (!selectObj) return error(res, 400, 'Invalid query parameters');
-      query = query.select(selectObj);
+      if (selectObj && typeof selectObj === 'object') query = query.select(selectObj);
     }
 
     if (req.query.skip) query = query.skip(Number(req.query.skip));
@@ -47,8 +49,9 @@ router.get('/', async (req, res) => {
 
     const results = await query.exec();
     return ok(res, results);
-  } catch {
-    return error(res, 400, 'Invalid query parameters');
+  } catch (err) {
+    console.error('GET /api/users failed:', err);
+    return error(res, 500, 'Server error retrieving users');
   }
 });
 
@@ -73,7 +76,8 @@ router.post('/', async (req, res) => {
       }
       throw e;
     }
-  } catch {
+  } catch (err) {
+    console.error('POST /api/users failed:', err);
     return error(res, 500, 'Server error creating user');
   }
 });
@@ -81,8 +85,16 @@ router.post('/', async (req, res) => {
 // ============================================
 // GET /api/users/:id
 // ============================================
-
-
+router.get('/:id', async (req, res) => {
+  try {
+    const sel = req.query.select ? JSON.parse(req.query.select) : undefined;
+    const user = await User.findById(req.params.id, sel);
+    if (!user) return error(res, 404, 'User not found');
+    return ok(res, user);
+  } catch {
+    return error(res, 404, 'User not found');
+  }
+});
 
 // ============================================
 // PUT /api/users/:id
@@ -150,7 +162,8 @@ router.put('/:id', async (req, res) => {
     await user.save();
 
     return ok(res, user);
-  } catch {
+  } catch (err) {
+    console.error('PUT /api/users failed:', err);
     return error(res, 500, 'Server error updating user');
   }
 });
@@ -170,7 +183,8 @@ router.delete('/:id', async (req, res) => {
 
     await user.deleteOne();
     return ok(res, null, 204, 'User deleted');
-  } catch {
+  } catch (err) {
+    console.error('DELETE /api/users failed:', err);
     return error(res, 500, 'Server error deleting user');
   }
 });
