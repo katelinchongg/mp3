@@ -76,44 +76,104 @@ module.exports = function(router) {
 
   // GET /api/users/:id  (+select must work)
   router.get('/:id', async (req, res) => {
-    try {
-      const sel = req.query.select ? JSON.parse(req.query.select) : undefined;
-      const user = await User.findById(req.params.id, sel);
-      if (!user) return error(res, 404, 'User not found');
-      return ok(res, user);
-    } catch { return error(res, 400, 'Invalid id or select'); }
-  });
+  try {
+    const sel = req.query.select ? JSON.parse(req.query.select) : undefined;
+    const user = await User.findById(req.params.id, sel);
+    if (!user) return error(res, 404, 'User not found');
+    return ok(res, user);
+  } catch {
+    // 404 for all invalid or missing ids (per MP expectation)
+    return error(res, 404, 'User not found');
+  }
+});
+
 
   // PUT /api/users/:id (replace entire user)
-  router.put('/:id', async (req, res) => {
-    try {
-      const { name, email, pendingTasks = [] } = req.body;
-      if (!name || !email) return error(res, 400, 'User must have name and email');
+  // PUT /api/users/:id (replace entire user)
+const mongoose = require('mongoose');
+const isId = (s) => mongoose.Types.ObjectId.isValid(s);
 
-      // Replace
-      const prev = await User.findById(req.params.id);
-      if (!prev) return error(res, 404, 'User not found');
+router.put('/:id', async (req, res) => {
+  try {
+    const { name, email, pendingTasks = [] } = req.body;
 
-      // Two-way: when replacing pendingTasks, unassign tasks no longer present, assign new ones
-      // 1) Unassign tasks removed
-      const removed = prev.pendingTasks.filter(id => !pendingTasks.includes(id));
+    // 1) Bad format (user id or task ids) -> 400
+    if (!isId(req.params.id)) return error(res, 400, 'Invalid user id');
+    if (!name || !email) return error(res, 400, 'User must have name and email');
+    for (const t of pendingTasks) {
+      if (!isId(t)) return error(res, 400, `Invalid task id: ${t}`);
+    }
+
+    // Find current user
+    const user = await User.findById(req.params.id);
+    if (!user) return error(res, 404, 'User not found'); // 3) user id does not exist
+
+    // 2) New email already in use -> 400
+    if (email !== user.email) {
+      const dup = await User.findOne({ email });
+      if (dup && String(dup._id) !== String(user._id)) {
+        return error(res, 400, 'Email already exists');
+      }
+    }
+
+    // 3) All new task ids must exist -> 404
+    const tasks = await Task.find({ _id: { $in: pendingTasks } });
+    if (tasks.length !== pendingTasks.length) {
+      return error(res, 404, 'One or more tasks do not exist');
+    }
+
+    // 4) (optional) Completed tasks in new tasks -> 400
+    // if (tasks.some(t => t.completed)) {
+    //   return error(res, 400, 'Completed tasks cannot be in pendingTasks');
+    // }
+
+    const oldSet = new Set((user.pendingTasks || []).map(String));
+    const newSet = new Set(pendingTasks.map(String));
+
+    const removed = [...oldSet].filter(id => !newSet.has(id));
+    const added   = [...newSet].filter(id => !oldSet.has(id));
+    const addedTaskDocs = await Task.find({ _id: { $in: added } });
+    if (addedTaskDocs.some(t => t.completed)) {
+      return error(res, 400, 'Cannot assign completed tasks to a user');
+    }
+
+
+    // 5) two-way #1: unassign tasks removed from this user
+    if (removed.length) {
       await Task.updateMany(
-        { _id: { $in: removed }, assignedUser: prev._id.toString() },
+        { _id: { $in: removed }, assignedUser: user._id.toString() },
         { $set: { assignedUser: '', assignedUserName: 'unassigned' } }
       );
+    }
 
-      // 2) Assign tasks newly added
-      const added = pendingTasks.filter(id => !prev.pendingTasks.includes(id));
+    // 6) two-way #2: pull added tasks from other users' pendingTasks
+    if (added.length) {
+      await User.updateMany(
+        { _id: { $ne: user._id }, pendingTasks: { $in: added } },
+        { $pull: { pendingTasks: { $in: added } } }
+      );
+    }
+
+    // 7) two-way #3: assign added tasks to this user
+    if (added.length) {
       await Task.updateMany(
         { _id: { $in: added } },
-        { $set: { assignedUser: prev._id.toString(), assignedUserName: name } }
+        { $set: { assignedUser: user._id.toString(), assignedUserName: name } }
       );
+    }
 
-      prev.name = name; prev.email = email; prev.pendingTasks = pendingTasks;
-      await prev.save();
-      return ok(res, prev);
-    } catch { return error(res, 500, 'Server error updating user'); }
-  });
+    // Update user (dateCreated stays unchanged)
+    user.name = name;
+    user.email = email;
+    user.pendingTasks = pendingTasks;
+    await user.save();
+
+    return ok(res, user);
+  } catch (e) {
+    return error(res, 500, 'Server error updating user');
+  }
+});
+
 
   // DELETE /api/users/:id (unassign the user’s pending tasks)
   router.delete('/:id', async (req, res) => {

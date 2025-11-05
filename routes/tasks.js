@@ -50,25 +50,37 @@ module.exports = function(router) {
 
 
   // POST /api/tasks
-  router.post('/', async (req, res) => {
-    try {
-      const { name, deadline, description = '', completed = false,
-              assignedUser = '', assignedUserName = 'unassigned' } = req.body;
-      if (!name || !deadline) return error(res, 400, 'Task must have name and deadline');
+ // POST /api/tasks
+router.post('/', async (req, res) => {
+  try {
+    const { name, deadline, description = '', completed = false,
+            assignedUser = '', assignedUserName = 'unassigned' } = req.body;
 
-      const task = await Task.create({ name, deadline, description, completed, assignedUser, assignedUserName });
+    if (!name || !deadline)
+      return error(res, 400, 'Task must have name and deadline');
 
-      // Two-way: if assignedUser provided, push into their pendingTasks if task not completed
-      if (assignedUser && !completed) {
-        await User.updateOne(
-          { _id: assignedUser },
-          { $addToSet: { pendingTasks: task._id.toString() } }
-        );
-      }
+    // 🚫 Don’t allow completed tasks to be assigned
+    if (completed && assignedUser)
+      return error(res, 400, 'Cannot assign a completed task');
 
-      return ok(res, task, 201, 'Task created');
-    } catch { return error(res, 500, 'Server error creating task'); }
-  });
+    const task = await Task.create({
+      name, deadline, description, completed, assignedUser, assignedUserName
+    });
+
+    // Two-way: if assignedUser provided, push into their pendingTasks (only if task not completed)
+    if (assignedUser && !completed) {
+      await User.updateOne(
+        { _id: assignedUser },
+        { $addToSet: { pendingTasks: task._id.toString() } }
+      );
+    }
+
+    return ok(res, task, 201, 'Task created');
+  } catch {
+    return error(res, 500, 'Server error creating task');
+  }
+});
+
 
   // GET /api/tasks/:id  (+select must work)
   router.get('/:id', async (req, res) => {
@@ -82,33 +94,47 @@ module.exports = function(router) {
 
   // PUT /api/tasks/:id (replace entire task)
   router.put('/:id', async (req, res) => {
-    try {
-      const { name, deadline, description = '', completed = false,
-              assignedUser = '', assignedUserName = 'unassigned' } = req.body;
-      if (!name || !deadline) return error(res, 400, 'Task must have name and deadline');
+  try {
+    const { name, deadline, description = '', completed = false,
+            assignedUser = '', assignedUserName = 'unassigned' } = req.body;
 
-      const task = await Task.findById(req.params.id);
-      if (!task) return error(res, 404, 'Task not found');
+    if (!name || !deadline)
+      return error(res, 400, 'Task must have name and deadline');
 
-      // Two-way: if reassigned, fix old user's pendingTasks and new user's list
-      if (task.assignedUser && task.assignedUser !== assignedUser) {
-        await User.updateOne(
-          { _id: task.assignedUser },
-          { $pull: { pendingTasks: task._id.toString() } }
-        );
-      }
-      if (assignedUser && !completed) {
-        await User.updateOne(
-          { _id: assignedUser },
-          { $addToSet: { pendingTasks: task._id.toString() } }
-        );
-      }
+    const task = await Task.findById(req.params.id);
+    if (!task) return error(res, 404, 'Task not found');
 
-      Object.assign(task, { name, deadline, description, completed, assignedUser, assignedUserName });
-      await task.save();
-      return ok(res, task);
-    } catch { return error(res, 500, 'Server error updating task'); }
-  });
+    // 🚫 Don’t allow assigning completed tasks
+    if (completed && assignedUser)
+      return error(res, 400, 'Cannot assign a completed task');
+
+    // Remove this task from the old user’s pendingTasks (if it was assigned before)
+    if (task.assignedUser && task.assignedUser !== assignedUser) {
+      await User.updateOne(
+        { _id: task.assignedUser },
+        { $pull: { pendingTasks: task._id.toString() } }
+      );
+    }
+
+    // If new assigned user is provided and task is not completed, add to pendingTasks
+    if (assignedUser && !completed) {
+      await User.updateOne(
+        { _id: assignedUser },
+        { $addToSet: { pendingTasks: task._id.toString() } }
+      );
+    }
+
+    Object.assign(task, {
+      name, deadline, description, completed, assignedUser, assignedUserName
+    });
+
+    await task.save();
+    return ok(res, task);
+  } catch {
+    return error(res, 500, 'Server error updating task');
+  }
+});
+
 
   // DELETE /api/tasks/:id (remove from assigned user’s pendingTasks)
   router.delete('/:id', async (req, res) => {
