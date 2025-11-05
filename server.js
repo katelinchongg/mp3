@@ -56,8 +56,23 @@ mongoose.connect(process.env.MONGODB_URI) // SRV URI from Atlas; password URL-en
     // 6) Routes
     // ===============================
     // Your routes/index.js should export a function (app, router)
-    const router = express.Router();
-    require('./routes')(app);
+    // ===============================
+// 6) Routes
+// ===============================
+    const usersRoute = require('./routes/users');
+    const tasksRoute = require('./routes/tasks');
+
+    app.use('/api/users', usersRoute);
+    app.use('/api/tasks', tasksRoute);
+
+    // Optional: root route for testing
+    app.get('/', (req, res) => {
+    res.json({
+        message: 'Welcome to the Llama.io API 🦙',
+        endpoints: ['/api/users', '/api/tasks']
+    });
+    });
+
 
     // ===============================
     // 7) Start server

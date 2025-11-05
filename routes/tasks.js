@@ -1,18 +1,20 @@
+const express = require('express');
+const router = express.Router();
 const Task = require('../models/task');
 const User = require('../models/user');
-const { buildQuery, ok, error } = require('./helpers');
+const { ok, error } = require('./helpers');
 
-module.exports = function(router) {
-  // GET /api/tasks
-  router.get('/', async (req, res) => {
+// ============================================
+// GET /api/tasks
+// ============================================
+router.get('/', async (req, res) => {
   try {
     const parseJSON = (param) => {
       try { return typeof param === 'string' ? JSON.parse(param) : param; }
       catch { return null; }
     };
 
-    // Build query
-    let query = Task.find(); // use User.find() or Task.find() depending on file
+    let query = Task.find();
 
     if (req.query.where) {
       const whereObj = parseJSON(req.query.where);
@@ -35,7 +37,6 @@ module.exports = function(router) {
     if (req.query.skip) query = query.skip(Number(req.query.skip));
     if (req.query.limit) query = query.limit(Number(req.query.limit));
 
-    // If ?count=true → return count instead of documents
     if (req.query.count === 'true') {
       const count = await query.countDocuments();
       return ok(res, count);
@@ -43,14 +44,14 @@ module.exports = function(router) {
 
     const results = await query.exec();
     return ok(res, results);
-  } catch (e) {
+  } catch {
     return error(res, 400, 'Invalid query parameters');
   }
 });
 
-
-  // POST /api/tasks
- // POST /api/tasks
+// ============================================
+// POST /api/tasks
+// ============================================
 router.post('/', async (req, res) => {
   try {
     const { name, deadline, description = '', completed = false,
@@ -59,7 +60,7 @@ router.post('/', async (req, res) => {
     if (!name || !deadline)
       return error(res, 400, 'Task must have name and deadline');
 
-    // 🚫 Don’t allow completed tasks to be assigned
+    // 🚫 Don’t allow assigning completed tasks
     if (completed && assignedUser)
       return error(res, 400, 'Cannot assign a completed task');
 
@@ -67,7 +68,7 @@ router.post('/', async (req, res) => {
       name, deadline, description, completed, assignedUser, assignedUserName
     });
 
-    // Two-way: if assignedUser provided, push into their pendingTasks (only if task not completed)
+    // Two-way: add to user's pendingTasks if not completed
     if (assignedUser && !completed) {
       await User.updateOne(
         { _id: assignedUser },
@@ -81,19 +82,24 @@ router.post('/', async (req, res) => {
   }
 });
 
+// ============================================
+// GET /api/tasks/:id
+// ============================================
+router.get('/:id', async (req, res) => {
+  try {
+    const sel = req.query.select ? JSON.parse(req.query.select) : undefined;
+    const task = await Task.findById(req.params.id, sel);
+    if (!task) return error(res, 404, 'Task not found');
+    return ok(res, task);
+  } catch {
+    return error(res, 400, 'Invalid id or select');
+  }
+});
 
-  // GET /api/tasks/:id  (+select must work)
-  router.get('/:id', async (req, res) => {
-    try {
-      const sel = req.query.select ? JSON.parse(req.query.select) : undefined;
-      const task = await Task.findById(req.params.id, sel);
-      if (!task) return error(res, 404, 'Task not found');
-      return ok(res, task);
-    } catch { return error(res, 400, 'Invalid id or select'); }
-  });
-
-  // PUT /api/tasks/:id (replace entire task)
-  router.put('/:id', async (req, res) => {
+// ============================================
+// PUT /api/tasks/:id
+// ============================================
+router.put('/:id', async (req, res) => {
   try {
     const { name, deadline, description = '', completed = false,
             assignedUser = '', assignedUserName = 'unassigned' } = req.body;
@@ -108,7 +114,7 @@ router.post('/', async (req, res) => {
     if (completed && assignedUser)
       return error(res, 400, 'Cannot assign a completed task');
 
-    // Remove this task from the old user’s pendingTasks (if it was assigned before)
+    // Remove from old user’s pendingTasks
     if (task.assignedUser && task.assignedUser !== assignedUser) {
       await User.updateOne(
         { _id: task.assignedUser },
@@ -116,7 +122,7 @@ router.post('/', async (req, res) => {
       );
     }
 
-    // If new assigned user is provided and task is not completed, add to pendingTasks
+    // Add to new user’s pendingTasks (if not completed)
     if (assignedUser && !completed) {
       await User.updateOne(
         { _id: assignedUser },
@@ -135,23 +141,26 @@ router.post('/', async (req, res) => {
   }
 });
 
+// ============================================
+// DELETE /api/tasks/:id
+// ============================================
+router.delete('/:id', async (req, res) => {
+  try {
+    const task = await Task.findById(req.params.id);
+    if (!task) return error(res, 404, 'Task not found');
 
-  // DELETE /api/tasks/:id (remove from assigned user’s pendingTasks)
-  router.delete('/:id', async (req, res) => {
-    try {
-      const task = await Task.findById(req.params.id);
-      if (!task) return error(res, 404, 'Task not found');
+    if (task.assignedUser) {
+      await User.updateOne(
+        { _id: task.assignedUser },
+        { $pull: { pendingTasks: task._id.toString() } }
+      );
+    }
 
-      if (task.assignedUser) {
-        await User.updateOne(
-          { _id: task.assignedUser },
-          { $pull: { pendingTasks: task._id.toString() } }
-        );
-      }
-      await task.deleteOne();
-      return ok(res, null, 204, 'Task deleted');
-    } catch { return error(res, 500, 'Server error deleting task'); }
-  });
+    await task.deleteOne();
+    return ok(res, null, 204, 'Task deleted');
+  } catch {
+    return error(res, 500, 'Server error deleting task');
+  }
+});
 
-  return router;
-};
+module.exports = router;
