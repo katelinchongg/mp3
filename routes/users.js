@@ -86,10 +86,8 @@ router.get('/', async (req, res) => {
     const parseJSON = (param) => {
       if (!param) return null;
       try {
-        // if already an object, just return it
-        if (typeof param === 'object') return param;
-        // decode URI and then parse JSON
-        return JSON.parse(decodeURIComponent(param));
+        const decoded = decodeURIComponent(param);
+        return JSON.parse(decoded);
       } catch {
         return null;
       }
@@ -97,6 +95,7 @@ router.get('/', async (req, res) => {
 
     let query = User.find();
 
+    // Only apply filters if provided
     if (req.query.where) {
       const whereObj = parseJSON(req.query.where);
       if (whereObj) query = query.find(whereObj);
@@ -120,13 +119,15 @@ router.get('/', async (req, res) => {
       return ok(res, count);
     }
 
+    // Execute query safely
     const results = await query.exec();
     return ok(res, results);
-  } catch (e) {
-    console.error('Error:', e.message);
-    return error(res, 400, 'Invalid query parameters');
+  } catch (err) {
+    console.error('GET /api/users error:', err);
+    return error(res, 500, 'Server error retrieving users');
   }
 });
+
 
 // ============================================
 // PUT /api/users/:id
