@@ -81,14 +81,50 @@ router.post('/', async (req, res) => {
 // ============================================
 // GET /api/users/:id
 // ============================================
-router.get('/:id', async (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const sel = req.query.select ? JSON.parse(req.query.select) : undefined;
-    const user = await User.findById(req.params.id, sel);
-    if (!user) return error(res, 404, 'User not found');
-    return ok(res, user);
-  } catch {
-    return error(res, 404, 'User not found');
+    const parseJSON = (param) => {
+      if (!param) return null;
+      try {
+        // if already an object, just return it
+        if (typeof param === 'object') return param;
+        // decode URI and then parse JSON
+        return JSON.parse(decodeURIComponent(param));
+      } catch {
+        return null;
+      }
+    };
+
+    let query = User.find();
+
+    if (req.query.where) {
+      const whereObj = parseJSON(req.query.where);
+      if (whereObj) query = query.find(whereObj);
+    }
+
+    if (req.query.sort) {
+      const sortObj = parseJSON(req.query.sort);
+      if (sortObj) query = query.sort(sortObj);
+    }
+
+    if (req.query.select) {
+      const selectObj = parseJSON(req.query.select);
+      if (selectObj) query = query.select(selectObj);
+    }
+
+    if (req.query.skip) query = query.skip(Number(req.query.skip));
+    if (req.query.limit) query = query.limit(Number(req.query.limit));
+
+    if (req.query.count === 'true') {
+      const count = await query.countDocuments();
+      return ok(res, count);
+    }
+
+    const results = await query.exec();
+    return ok(res, results);
+  } catch (e) {
+    console.error('Error:', e.message);
+    return error(res, 400, 'Invalid query parameters');
   }
 });
 
